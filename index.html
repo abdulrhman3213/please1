@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Command Center | USMLE</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <meta name="theme-color" content="#2563eb">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="USMLE Pro">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3063/3063176.png">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=Noto+Sans+Arabic:wght@400;700;900&display=swap');
+        body {
+            font-family: 'Noto Sans Arabic', 'Plus Jakarta Sans', sans-serif;
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            overflow-x: hidden;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .stopwatch-glow {
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+        }
+        .animate-slide-in {
+            animation: slideIn 0.3s ease-out forwards;
+        }
+        .animate-bounce-slow {
+            animation: bounce 2s infinite;
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-100%) translateX(-50%); opacity: 0; }
+            to { transform: translateY(0) translateX(-50%); opacity: 1; }
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(-5%); }
+            50% { transform: translateY(5%); }
+        }
+        ::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; }
+        .transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 300ms; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // -------------------------------------------------------------------------
+        // ⚙️ إعدادات فايربيس (Firebase Config)
+        // -------------------------------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY_HERE",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        let auth, db, provider;
+        const isFirebaseConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY_HERE";
+        
+        if (isFirebaseConfigured) {
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                provider = new GoogleAuthProvider();
+            } catch (error) {
+                console.error("Firebase Init Error:", error);
+            }
+        }
+
+        const App = () => {
+            // --- الإعدادات الثابتة ---
+            const CONFIG = {
+                startDate: new Date('2026-02-18'),
+                targetDate: new Date('2026-07-15'), 
+                totalBnB: 2000, 
+                totalUW: 3800,
+                totalClinicalTasks: 16 * 7 * 4,
+                levelThreshold: 1000,
+                xpPerPage: 10,
+                xpPerQuestion: 25,
+                xpPerRandomQuestion: 15,
+                estimatedMaxLevel: 158 
+            };
+
+            const TOTAL_DAYS = useMemo(() => {
+                return Math.ceil((CONFIG.targetDate - CONFIG.startDate) / (1000 * 60 * 60 * 24));
+            }, []);
+
+            const INITIAL_TASKS = [
+                { id: 1, category: 'USMLE', title: 'USMLE Base Block 1', goal: 'هدف: 6 صفحات', duration: 80, xp: 80, inputType: 'pages', defaultVal: 6 },
+                { id: 2, category: 'USMLE', title: 'USMLE Base Block 2', goal: 'هدف: 6 صفحات', duration: 80, xp: 80, inputType: 'pages', defaultVal: 6 },
+                { id: 3, category: 'USMLE', title: 'حل ما تمت مذاكرته أمس (40 min)', goal: 'مراجعة USMLE', duration: 40, xp: 40 },
+                { id: 4, category: 'Clinical', title: 'Clinical Block 1 - نظري', goal: 'مذاكرة كلينيكال', duration: 80, xp: 80 },
+                { id: 5, category: 'Clinical', title: 'Clinical Block 2 - عملي', goal: 'مذاكرة كلينيكال', duration: 80, xp: 80 },
+                { id: 6, category: 'Clinical', title: 'مراجعة Clinical أمس (40 min)', goal: 'مراجعة الكلينيكال', duration: 40, xp: 40 },
+                { id: 7, category: 'Review', title: 'ANKI (Prev Blocks)', goal: 'تكرار متباعد', duration: 60, xp: 60 },
+                { id: 8, category: 'Clinical', title: 'Clinical Daily ANKI', goal: 'مراجعة مركزة', duration: 30, xp: 30 },
+                { id: 9, category: 'UWorld', title: 'UW Block 1', goal: 'هدف: 7 أسئلة', duration: 50, xp: 50, inputType: 'questions', defaultVal: 7 },
+                { id: 10, category: 'UWorld', title: 'UW Block 2', goal: 'هدف: 7 أسئلة', duration: 50, xp: 50, inputType: 'questions', defaultVal: 7 },
+                { id: 11, category: 'UWorld', title: 'UW Block 3', goal: 'هدف: 7 أسئلة', duration: 50, xp: 50, inputType: 'questions', defaultVal: 7 },
+                { id: 12, category: 'UWorld', title: 'UW Block 4 (Random)', goal: 'هدف: 7 أسئلة', duration: 50, xp: 50, inputType: 'questions', defaultVal: 7 },
+            ];
+
+            const INITIAL_STATS = {
+                xpBalance: 0,
+                xpTotal: 0,
+                streak: 0,
+                pagesRead: 0,
+                totalUWDone: 0,
+                uwSecondPass: 0,
+                totalClinicalDone: 0,
+                daysElapsed: 0 
+            };
+
+            const [user, setUser] = useState(null);
+            const [userStats, setUserStats] = useState(INITIAL_STATS);
+            const [dailyTasks, setDailyTasks] = useState(INITIAL_TASKS.map(t => ({ ...t, completed: false })));
+            const [stopwatchTime, setStopwatchTime] = useState(0);
+            const [journalEntries, setJournalEntries] = useState([]);
+            
+            const [isResetConfirming, setIsResetConfirming] = useState(false);
+            const [notification, setNotification] = useState(null);
+            const [showSettings, setShowSettings] = useState(false);
+            const [noteInput, setNoteInput] = useState("");
+            const [isDataLoaded, setIsDataLoaded] = useState(false);
+
+            // --- Sound System ---
+            const audioCtx = useRef(null);
+
+            const playSound = (type) => {
+                if (!audioCtx.current) {
+                    audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const ctx = audioCtx.current;
+                const now = ctx.currentTime;
+
+                if (type === 'success') {
+                    const notes = [440, 554, 659, 880];
+                    notes.forEach((freq, i) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.type = 'sine';
+                        osc.frequency.value = freq;
+                        const startTime = now + i * 0.1;
+                        gain.gain.setValueAtTime(0, startTime);
+                        gain.gain.linearRampToValueAtTime(0.2, startTime + 0.05);
+                        gain.gain.linearRampToValueAtTime(0, startTime + 0.15);
+                        osc.start(startTime);
+                        osc.stop(startTime + 0.15);
+                    });
+                } else if (type === 'error') {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, now);
+                    osc.frequency.linearRampToValueAtTime(100, now + 0.2);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
+                } else if (type === 'reward') {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(600, now);
+                    osc.frequency.setValueAtTime(800, now + 0.1);
+                    osc.frequency.setValueAtTime(1200, now + 0.2);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                }
+            };
+
+            // --- Loading Data With Version Migration ---
+            // هذه الوظيفة تبحث عن بياناتك في النسخ السابقة وتستعيدها
+            useEffect(() => {
+                const getOldData = (prefix) => {
+                    // البحث في كل النسخ التي استخدمناها سابقاً لاسترجاع بياناتك من الهاتف
+                    const versions = ['v8', 'v7', 'v4', 'v3', 'v2', 'v1'];
+                    for (let v of versions) {
+                        const val = localStorage.getItem(`${prefix}_${v}`);
+                        if (val) return val;
+                    }
+                    // بعض النسخ القديمة كانت تحفظ بدون رقم
+                    const fallback = localStorage.getItem(prefix);
+                    if (fallback) return fallback;
+                    
+                    return null;
+                };
+
+                const loadLocal = () => {
+                    try {
+                        const savedStatsStr = getOldData('usmle_pwa_ultra');
+                        if (savedStatsStr) {
+                            const parsedStats = JSON.parse(savedStatsStr);
+                            setUserStats({ ...INITIAL_STATS, ...parsedStats });
+                        }
+                        
+                        const savedTasksStr = getOldData('usmle_tasks_ultra');
+                        if (savedTasksStr) {
+                            const parsedTasks = JSON.parse(savedTasksStr);
+                            const mergedTasks = INITIAL_TASKS.map(initT => {
+                                const savedT = parsedTasks.find(t => t.id === initT.id);
+                                return savedT ? { ...initT, ...savedT } : { ...initT, completed: false, inputValue: initT.defaultVal || 0, recordedValue: 0 };
+                            });
+                            setDailyTasks(mergedTasks);
+                        }
+
+                        const savedSWStr = getOldData('usmle_sw_ultra');
+                        if (savedSWStr) setStopwatchTime(parseInt(savedSWStr));
+
+                        const savedJournalStr = getOldData('usmle_journal');
+                        if (savedJournalStr) setJournalEntries(JSON.parse(savedJournalStr));
+                        
+                        setIsDataLoaded(true);
+                    } catch (e) { 
+                        console.error("Error loading local data", e); 
+                        setIsDataLoaded(true); // تفادي تعليق التطبيق
+                    }
+                };
+                loadLocal();
+            }, []);
+
+            // --- Firebase Sync ---
+            useEffect(() => {
+                if (!isFirebaseConfigured || !auth) return;
+                const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        const userRef = doc(db, "users", currentUser.uid);
+                        const unsubDoc = onSnapshot(userRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                if (data.stats) setUserStats({ ...INITIAL_STATS, ...data.stats });
+                                if (data.tasks) setDailyTasks(data.tasks);
+                                if (data.journal) setJournalEntries(data.journal);
+                            }
+                        });
+                        return () => unsubDoc();
+                    }
+                });
+                return () => unsubscribe && unsubscribe();
+            }, []);
+
+            // --- Saving Data (Always save to latest version v8) ---
+            useEffect(() => {
+                if (!isDataLoaded) return;
+                
+                // الحفظ دائماً في النسخة الأحدث (v8)
+                localStorage.setItem('usmle_pwa_ultra_v8', JSON.stringify(userStats));
+                localStorage.setItem('usmle_tasks_ultra_v8', JSON.stringify(dailyTasks));
+                localStorage.setItem('usmle_sw_ultra_v8', stopwatchTime.toString());
+                localStorage.setItem('usmle_journal_v8', JSON.stringify(journalEntries));
+
+                if (user && isFirebaseConfigured && db) {
+                    const saveData = async () => {
+                        try {
+                            await setDoc(doc(db, "users", user.uid), {
+                                stats: userStats,
+                                tasks: dailyTasks,
+                                journal: journalEntries,
+                                lastUpdated: new Date()
+                            }, { merge: true });
+                        } catch (e) { }
+                    };
+                    saveData();
+                }
+                
+                if (window.lucide) window.lucide.createIcons();
+            }, [userStats, dailyTasks, stopwatchTime, journalEntries, user, isDataLoaded]);
+
+            useEffect(() => {
+                if (notification) {
+                    const t = setTimeout(() => setNotification(null), 3000);
+                    return () => clearTimeout(t);
+                }
+            }, [notification]);
+
+            // --- Stopwatch Logic ---
+            const [isSwActive, setIsSwActive] = useState(false);
+            const swRef = useRef(null);
+            useEffect(() => {
+                if (isSwActive) swRef.current = setInterval(() => setStopwatchTime(p => p + 1), 1000);
+                else clearInterval(swRef.current);
+                return () => clearInterval(swRef.current);
+            }, [isSwActive]);
+            const formatSw = (s) => {
+                const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+                return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+            };
+
+            // --- Calculations & Mood ---
+            const level = Math.floor(userStats.xpTotal / CONFIG.levelThreshold) + 1;
+            const xpInCurrentLevel = userStats.xpTotal % CONFIG.levelThreshold;
+            const levelProg = (xpInCurrentLevel / CONFIG.levelThreshold) * 100;
+            const daysRemaining = Math.max(0, TOTAL_DAYS - userStats.daysElapsed);
+            
+            const timeElapsedPercent = Math.min(1, userStats.daysElapsed / TOTAL_DAYS);
+            const expectedLevel = Math.max(1, Math.floor(CONFIG.estimatedMaxLevel * timeElapsedPercent));
+            const levelDifference = level - expectedLevel;
+
+            const getMood = () => {
+                if (levelDifference >= 5) return { emoji: "🤩", color: "text-emerald-500", text: "أداء أسطوري!" };
+                if (levelDifference >= 2) return { emoji: "😎", color: "text-blue-500", text: "مسيطر على الوضع" };
+                if (levelDifference >= 0) return { emoji: "🙂", color: "text-green-500", text: "ماشي تمام" };
+                if (levelDifference >= -2) return { emoji: "😐", color: "text-yellow-500", text: "شد حيلك شوية" };
+                if (levelDifference >= -5) return { emoji: "😰", color: "text-orange-500", text: "متأخر.. ركز!" };
+                return { emoji: "🤬", color: "text-red-600", text: "وضع خطر جداً!" };
+            };
+            const mood = getMood();
+
+            const bnbPer = ((userStats.pagesRead / CONFIG.totalBnB) * 100).toFixed(1);
+            const uwPer = ((userStats.totalUWDone / CONFIG.totalUW) * 100).toFixed(1);
+            const clinPer = ((userStats.totalClinicalDone / CONFIG.totalClinicalTasks) * 100).toFixed(1);
+
+            // --- Auth Handlers ---
+            const handleGoogleLogin = async () => {
+                if (!isFirebaseConfigured) { 
+                    setNotification({ type: 'error', message: 'إعدادات Firebase غير موجودة.' }); 
+                    return; 
+                }
+                try { await signInWithPopup(auth, provider); setNotification({ type: 'success', message: 'تم تسجيل الدخول' }); } 
+                catch (error) { setNotification({ type: 'error', message: 'فشل الدخول' }); }
+            };
+            const handleLogout = async () => { try { await signOut(auth); setNotification({ type: 'success', message: 'تم الخروج' }); } catch (e) {} };
+
+            // --- Actions ---
+            const handleTaskInputChange = (id, val) => {
+                const numVal = parseInt(val) || 0;
+                setDailyTasks(prev => prev.map(t => t.id === id ? { ...t, inputValue: numVal } : t));
+            };
+
+            const toggleTask = (id) => {
+                setDailyTasks(prev => prev.map(t => {
+                    if (t.id === id) {
+                        const next = !t.completed;
+                        if (next) {
+                            playSound('success');
+                            if (window.confetti) {
+                                window.confetti({
+                                    particleCount: 150,
+                                    spread: 80,
+                                    origin: { y: 0.6 },
+                                    colors: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444']
+                                });
+                            }
+                        }
+
+                        const val = next ? (t.inputValue || 0) : (t.recordedValue || 0);
+                        let calculatedXP = 0;
+                        if (t.inputType === 'pages') calculatedXP = val * CONFIG.xpPerPage;
+                        else if (t.inputType === 'questions') calculatedXP = val * (t.id === 12 ? CONFIG.xpPerRandomQuestion : CONFIG.xpPerQuestion);
+                        else calculatedXP = t.xp;
+
+                        setUserStats(s => {
+                            let newStats = { ...s };
+                            if (next) { newStats.xpBalance += calculatedXP; newStats.xpTotal += calculatedXP; }
+                            else { newStats.xpBalance = Math.max(0, newStats.xpBalance - calculatedXP); newStats.xpTotal = Math.max(0, newStats.xpTotal - calculatedXP); }
+
+                            if (t.inputType === 'pages') newStats.pagesRead = next ? s.pagesRead + val : Math.max(0, s.pagesRead - val);
+                            else if (t.inputType === 'questions') {
+                                if (t.id === 12) newStats.uwSecondPass = next ? (s.uwSecondPass || 0) + val : Math.max(0, (s.uwSecondPass || 0) - val);
+                                else newStats.totalUWDone = next ? s.totalUWDone + val : Math.max(0, s.totalUWDone - val);
+                            }
+                            if (t.category === 'Clinical') newStats.totalClinicalDone = next ? s.totalClinicalDone + 1 : Math.max(0, s.totalClinicalDone - 1);
+                            return newStats;
+                        });
+                        return { ...t, completed: next, recordedValue: next ? val : 0 };
+                    }
+                    return t;
+                }));
+            };
+
+            const handleResetDay = () => {
+                setDailyTasks(INITIAL_TASKS.map(t => ({ ...t, completed: false, inputValue: t.defaultVal || 0, recordedValue: 0 })));
+                setUserStats(s => ({ ...s, streak: s.streak + 1, daysElapsed: s.daysElapsed + 1 }));
+                setStopwatchTime(0);
+                setIsSwActive(false);
+                setIsResetConfirming(false);
+                playSound('reward');
+                setNotification({ type: 'success', message: 'تم تصفير المهام! يوم جديد سعيد.' });
+            };
+
+            const hardReset = () => {
+                if (confirm("⚠️ هل تريد مسح كافة البيانات والبدء من الصفر؟")) {
+                    localStorage.clear();
+                    window.location.reload();
+                }
+            };
+
+            const redeemReward = (reward) => {
+                if (userStats.xpBalance >= reward.cost) {
+                    setUserStats(s => ({ ...s, xpBalance: s.xpBalance - reward.cost }));
+                    playSound('reward');
+                    setNotification({ type: 'success', message: `استمتع بـ ${reward.title}!` });
+                } else {
+                    playSound('error');
+                    setNotification({ type: 'error', message: 'رصيد الـ XP لا يكفي.' });
+                }
+            };
+
+            const addNote = () => {
+                if (!noteInput.trim()) return;
+                const newNote = { id: Date.now(), text: noteInput, date: new Date().toLocaleDateString('ar-EG') };
+                setJournalEntries([newNote, ...journalEntries]);
+                setNoteInput("");
+                playSound('success');
+            };
+            const deleteNote = (id) => setJournalEntries(journalEntries.filter(n => n.id !== id));
+
+            const REWARDS_LIST = [
+                { title: "سناك خفيف", cost: 300, icon: "coffee" },
+                { title: "سوشيال ميديا (15د)", cost: 500, icon: "smartphone" },
+                { title: "حلقة مسلسل", cost: 1500, icon: "tv" },
+                { title: "ساعة ألعاب", cost: 2000, icon: "gamepad-2" },
+                { title: "خروجة مع أصحاب", cost: 2500, icon: "users" },
+                { title: "وجبة مفتوحة", cost: 3500, icon: "pizza" },
+                { title: "شراء كتاب/أداة", cost: 5000, icon: "shopping-cart" },
+                { title: "يوم أجازة", cost: 10000, icon: "sun" },
+            ];
+
+            return (
+                <div className="max-w-4xl mx-auto px-4 pt-6 pb-40 space-y-8 relative">
+                    {/* Settings Modal */}
+                    {showSettings && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                            <div className="bg-white p-6 rounded-3xl w-full max-w-sm animate-slide-in shadow-2xl">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><i data-lucide="settings"></i> الإعدادات</h3>
+                                <div className="space-y-3">
+                                    {!user ? (
+                                        <button onClick={handleGoogleLogin} className="w-full p-4 bg-white border border-slate-200 rounded-xl flex items-center justify-center gap-2 hover:bg-slate-50 transition-all shadow-sm">
+                                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                                            <span className="font-bold text-sm text-slate-700">دخول بـ Google</span>
+                                        </button>
+                                    ) : (
+                                        <div className="p-4 bg-slate-50 rounded-xl text-center border border-slate-200">
+                                            <img src={user.photoURL} alt="User" className="w-12 h-12 rounded-full mx-auto mb-2 border-2 border-white shadow-sm" />
+                                            <p className="font-bold text-sm text-slate-800">{user.displayName}</p>
+                                            <button onClick={handleLogout} className="text-xs text-red-500 font-bold hover:underline">خروج</button>
+                                        </div>
+                                    )}
+                                    <div className="border-t pt-3 mt-2">
+                                        <button onClick={() => setShowSettings(false)} className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800">إغلاق</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {notification && (
+                        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[90] w-full max-w-xs animate-slide-in">
+                            <div className={`p-4 rounded-2xl shadow-2xl flex items-center gap-3 border ${notification.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+                                <i data-lucide={notification.type === 'success' ? "check-circle" : "alert-circle"}></i>
+                                <p className="text-xs font-bold">{notification.message}</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Header */}
+                    <header className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex items-center justify-between gap-4 sticky top-4 z-40">
+                        <div className="flex items-center gap-3">
+                            <div className="relative">
+                                {/* Mood Emoji */}
+                                <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-3xl shadow-inner border border-slate-200 animate-bounce-slow">
+                                    {mood.emoji}
+                                </div>
+                                <div className={`absolute -bottom-2 -right-2 px-2 py-0.5 rounded-lg text-[8px] font-black text-white ${levelDifference >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}>
+                                    {levelDifference > 0 ? '+' + levelDifference : levelDifference}
+                                </div>
+                            </div>
+                            <div>
+                                <h1 className="text-lg font-black text-slate-800 leading-tight">Command Center</h1>
+                                <div className="flex flex-col mt-1.5">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-xs font-black text-blue-700">المستوى {level}</span>
+                                        <div className="flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 shadow-sm">
+                                            <i data-lucide="zap" className="w-3 h-3 text-amber-500 fill-amber-500"></i>
+                                            <span className="font-mono text-[10px] font-black text-amber-700">{userStats.xpBalance} متاح</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-32 h-2.5 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
+                                            <div className="h-full bg-blue-500 transition-all duration-700" style={{width: `${levelProg}%`}}></div>
+                                        </div>
+                                        <span className="text-[9px] font-bold text-slate-500">{xpInCurrentLevel} / {CONFIG.levelThreshold} XP</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-left">
+                            <button onClick={() => setShowSettings(true)} className="p-2 bg-slate-100 rounded-full text-slate-400 hover:text-blue-500 transition-colors relative">
+                                <i data-lucide="settings" className="w-5 h-5"></i>
+                                {!isFirebaseConfigured && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>}
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* Timeline & Mood Section */}
+                    <section className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-lg relative overflow-hidden">
+                        <div className="relative z-10">
+                            <div className="flex justify-between items-end mb-2">
+                                <div>
+                                    <p className="text-xs text-slate-400 font-bold mb-1">تحليل الأداء</p>
+                                    <h2 className={`text-xl font-black flex items-center gap-2 ${mood.color}`}>
+                                        {mood.text}
+                                    </h2>
+                                </div>
+                                <div className="text-left">
+                                    <p className="text-[10px] text-slate-400">المتوقع</p>
+                                    <p className="text-xl font-bold text-blue-400">Lvl {expectedLevel}</p>
+                                </div>
+                            </div>
+                            <div className="w-full bg-slate-800 rounded-full h-3 relative mt-2 overflow-hidden">
+                                <div className="absolute top-0 right-0 h-full bg-slate-600 w-full" style={{width: `${(expectedLevel/CONFIG.estimatedMaxLevel)*100}%`, opacity: 0.3}}></div>
+                                <div className={`absolute top-0 right-0 h-full transition-all duration-1000 ${levelDifference >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{width: `${Math.min(100, (level/CONFIG.estimatedMaxLevel)*100)}%`}}></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Stats Grid */}
+                    <section className="grid grid-cols-1 md:grid-cols-3 gap-4 text-right">
+                        <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                            <div className="flex justify-between items-end mb-1">
+                                <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">UWorld</p>
+                                <span className="text-[9px] font-bold text-orange-400 bg-orange-50 px-2 py-0.5 rounded-full">Pass 2: {userStats.uwSecondPass || 0}</span>
+                            </div>
+                            <p className="text-2xl font-black">{userStats.totalUWDone} <span className="text-xs font-normal text-slate-400">/ {CONFIG.totalUW}</span></p>
+                            <div className="w-full h-2 bg-slate-50 rounded-full mt-3 overflow-hidden">
+                                <div className="h-full bg-orange-500 transition-all duration-700" style={{width: `${Math.min(uwPer, 100)}%`}}></div>
+                            </div>
+                        </div>
+                        <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm">
+                            <p className="text-[10px] font-black text-emerald-500 mb-1 uppercase tracking-widest">BnB</p>
+                            <p className="text-2xl font-black">{userStats.pagesRead} <span className="text-xs font-normal text-slate-400">/ {CONFIG.totalBnB}</span></p>
+                            <div className="w-full h-2 bg-slate-50 rounded-full mt-3 overflow-hidden">
+                                <div className="h-full bg-emerald-500 transition-all duration-700" style={{width: `${Math.min(bnbPer, 100)}%`}}></div>
+                            </div>
+                        </div>
+                        <div className="bg-white p-5 rounded-[2rem] border border-blue-100 shadow-sm">
+                            <p className="text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">الكلينيكال</p>
+                            <p className="text-2xl font-black">{clinPer}%</p>
+                            <div className="w-full h-2 bg-slate-50 rounded-full mt-3 overflow-hidden">
+                                <div className="h-full bg-blue-600 transition-all duration-1000" style={{width: `${Math.min(clinPer, 100)}%`}}></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Journal */}
+                    <section className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                        <h3 className="text-lg font-black flex items-center gap-2 mb-4 text-slate-800"><i data-lucide="book" className="text-purple-500"></i> مذكرات الكفاح</h3>
+                        <div className="flex gap-2 mb-4">
+                            <textarea value={noteInput} onChange={(e) => setNoteInput(e.target.value)} placeholder="اكتب مشاعرك هنا..." className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:border-purple-400 min-h-[60px]"></textarea>
+                            <button onClick={addNote} className="bg-purple-600 text-white p-3 rounded-xl self-end hover:bg-purple-700"><i data-lucide="send" className="w-5 h-5"></i></button>
+                        </div>
+                        <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar">
+                            {journalEntries.length === 0 && <p className="text-center text-xs text-slate-300">لا توجد مذكرات.</p>}
+                            {journalEntries.map(note => (
+                                <div key={note.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100 relative group">
+                                    <p className="text-xs text-slate-600 whitespace-pre-wrap">{note.text}</p>
+                                    <div className="flex justify-between items-center mt-2"><span className="text-[10px] text-slate-400 font-bold">{note.date}</span><button onClick={() => deleteNote(note.id)} className="text-red-300 hover:text-red-500"><i data-lucide="trash-2" className="w-3 h-3"></i></button></div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    {/* Daily Tasks */}
+                    <section className="space-y-4">
+                        <div className="flex items-center justify-between px-2">
+                            <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800"><i data-lucide="calendar-days" className="text-blue-600"></i> المهام اليومية</h2>
+                            {!isResetConfirming ? (
+                                <button onClick={() => setIsResetConfirming(true)} className="bg-blue-600 text-white px-5 py-3 rounded-2xl font-black text-xs hover:bg-blue-700 transition-all shadow-lg flex items-center gap-2">
+                                    <i data-lucide="check-circle" className="w-4 h-4"></i> تصفير اليوم
+                                </button>
+                            ) : (
+                                <div className="flex items-center gap-2 animate-pulse">
+                                    <button onClick={handleResetDay} className="bg-red-500 text-white px-4 py-2 rounded-xl text-[10px] font-black">تأكيد؟</button>
+                                    <button onClick={() => setIsResetConfirming(false)} className="bg-slate-200 text-slate-600 px-4 py-2 rounded-xl text-[10px] font-black">إلغاء</button>
+                                </div>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {dailyTasks.map(task => (
+                                <div key={task.id} className={`flex flex-col gap-2 p-5 rounded-[2rem] border transition-all text-right group ${task.completed ? 'bg-slate-100 border-slate-200 opacity-75' : 'bg-white border-slate-200 hover:border-blue-300 shadow-sm'}`}>
+                                    <div className="flex items-center gap-4">
+                                        <button onClick={() => toggleTask(task.id)} className={`shrink-0 transition-transform active:scale-90 ${task.completed ? 'text-emerald-500' : 'text-slate-300'}`}>
+                                            <i data-lucide={task.completed ? "check-circle" : "circle"} className="w-8 h-8"></i>
+                                        </button>
+                                        <div className="flex-1 text-right">
+                                            <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md mb-1 inline-block ${task.category === 'USMLE' ? 'bg-blue-100 text-blue-600' : task.category === 'Clinical' ? 'bg-purple-100 text-purple-600' : 'bg-orange-100 text-orange-600'}`}>{task.category}</span>
+                                            <h4 className={`font-black text-sm leading-tight ${task.completed ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{task.title}</h4>
+                                            <p className="text-[10px] text-slate-400 mt-0.5">{task.goal}</p>
+                                        </div>
+                                    </div>
+                                    {task.inputType && !task.completed && (
+                                        <div className="flex items-center gap-2 mt-2 mr-12">
+                                            <span className="text-[10px] font-bold text-slate-500">{task.inputType === 'pages' ? 'عدد الصفحات:' : 'عدد الأسئلة:'}</span>
+                                            <input type="number" value={task.inputValue} onChange={(e) => handleTaskInputChange(task.id, e.target.value)} className="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center text-sm font-bold focus:outline-none focus:border-blue-400" />
+                                        </div>
+                                    )}
+                                    {task.inputType && task.completed && (
+                                        <div className="flex items-center gap-1 mt-1 mr-12 text-[10px] font-bold text-emerald-600">
+                                            <i data-lucide="check" className="w-3 h-3"></i><span>تم احتساب {task.recordedValue}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    {/* Rewards */}
+                    <section className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm mb-12">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-black flex items-center gap-2"><i data-lucide="shopping-bag" className="text-yellow-500"></i> المكافآت</h3>
+                            <div className="flex items-center gap-1 bg-amber-50 px-3 py-1 rounded-full border border-amber-200"><i data-lucide="zap" className="w-3.5 h-3.5 text-amber-500 fill-amber-500"></i><span className="font-black text-amber-700 text-xs">{userStats.xpBalance} XP</span></div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {REWARDS_LIST.map((reward, i) => {
+                                const canAfford = userStats.xpBalance >= reward.cost;
+                                return (
+                                    <div key={i} className={`flex items-center justify-between p-5 rounded-3xl border transition-all ${canAfford ? 'bg-white border-blue-200 shadow-sm' : 'bg-slate-50 border-slate-100 opacity-60'}`}>
+                                        <div className="flex items-center gap-3 text-right">
+                                            <div className={`p-3 rounded-2xl ${canAfford ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'}`}><i data-lucide={reward.icon}></i></div>
+                                            <div><p className="font-bold text-sm">{reward.title}</p><p className="text-[10px] text-slate-400 font-bold">{reward.cost} XP</p></div>
+                                        </div>
+                                        <button onClick={() => redeemReward(reward)} disabled={!canAfford} className={`px-4 py-2 rounded-xl text-[10px] font-black active:scale-95 ${canAfford ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-md' : 'bg-slate-200 text-slate-400'}`}>استبدال</button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    {/* Footer */}
+                    <footer className="fixed bottom-6 left-0 right-0 px-4 z-40 pointer-events-none">
+                        <div className="bg-white/95 backdrop-blur-md border border-slate-200 px-8 py-4 rounded-full shadow-2xl flex items-center justify-between max-w-lg mx-auto pointer-events-auto border border-white/50">
+                            <div className="text-center"><p className="text-[8px] text-slate-400 font-black uppercase tracking-tighter">اليوم</p><p className="font-black text-emerald-600 text-lg leading-none">{dailyTasks.filter(t=>t.completed).length}/12</p></div>
+                            <div className="h-10 w-px bg-slate-200 mx-2"></div>
+                            <div className="text-center"><p className="text-[8px] text-slate-400 font-black uppercase tracking-tighter">متبقي</p><p className="font-black text-blue-600 text-lg leading-none">{daysRemaining} يوم</p></div>
+                            <div className="h-10 w-px bg-slate-200 mx-2"></div>
+                            <div className="text-center"><p className="text-[8px] text-slate-400 font-black uppercase tracking-tighter">XP</p><p className="font-black text-amber-600 text-lg leading-none">{userStats.xpBalance}</p></div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+    
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('Service Worker Registered Successfully!'))
+            .catch(err => console.log('Service Worker Registration Failed:', err));
+        });
+      }
+    </script>
+</body>
+</html>
